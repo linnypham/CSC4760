@@ -1,0 +1,5 @@
+commands for terminal
+psudo codes
+monte carlo pi
+
+how to create actor
