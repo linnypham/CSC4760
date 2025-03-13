@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 
 x = [1000,10000,100000]
-y1 = [48.70,56.78,643.48]
-y2 = [9.57, 45.61,958.69]
+y2 = [8.68,56.19,808.60]
+y1 = [16.32, 56.78,643.48]
 
 fig, ax = plt.subplots()
 ax.plot(x,y1,'x-',label='1 node')
