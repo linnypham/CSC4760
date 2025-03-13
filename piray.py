@@ -1,5 +1,7 @@
 import ray
+import time
 
+start = time.time()
 # Initialize Ray
 ray.init()
 
@@ -25,7 +27,11 @@ tasks = [compute_area.remote(i) for i in range(N)]
 # Gather results from all tasks and sum them up
 pi_approximation = sum(ray.get(tasks)) * delta_x
 
+end = time.time()
+duration = end-time
 print(f"Approximation of π: {pi_approximation}")
+
+print(f'Time: {duration} seconds')
 
 # Shutdown Ray
 ray.shutdown()
