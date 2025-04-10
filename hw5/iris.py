@@ -1,51 +1,99 @@
-from pyspark.sql import SparkSession
-from pyspark.ml.feature import VectorAssembler
-from pyspark.ml.classification import LinearSVC, MultilayerPerceptronClassifier
+from pyspark.sql import SparkSession  
+from pyspark.ml import Pipeline
+from pyspark.ml.classification import LinearSVC, MultilayerPerceptronClassifier, OneVsRest
+from pyspark.ml.feature import VectorAssembler, StringIndexer, StandardScaler
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-# Step 1: Initialize Spark Session
-spark = SparkSession.builder.appName("IrisClassification").getOrCreate()
+# Initialize Spark
+spark = SparkSession.builder \
+    .appName("IrisClassification") \
+    .getOrCreate()
 
-# Step 2: Load Dataset
-data_url = "https://gist.githubusercontent.com/curran/a08a1080b88344b0c8a7/raw/iris.csv"
-iris_df = spark.read.csv(data_url, header=True, inferSchema=True)
+# 1. Load and prepare data
+df = spark.read.csv("iris.csv", header=True, inferSchema=True)
+assembler = VectorAssembler(
+    inputCols=["sepal_length", "sepal_width", "petal_length", "petal_width"],
+    outputCol="assembled_features"
+)
 
-# Step 3: Preprocess Data
-assembler = VectorAssembler(inputCols=["sepal_length", "sepal_width", "petal_length", "petal_width"], outputCol="features")
-iris_df = assembler.transform(iris_df)
-iris_df = iris_df.withColumnRenamed("species", "label")
+# Add standardization - critical for SVM and MLP
+scaler = StandardScaler(
+    inputCol="assembled_features", 
+    outputCol="features",
+    withStd=True, 
+    withMean=True
+)
 
-# Split data into training and testing sets
-train_data, test_data = iris_df.randomSplit([0.8, 0.2], seed=42)
+label_indexer = StringIndexer(inputCol="species", outputCol="label")
+train, test = df.randomSplit([0.8, 0.2], seed=42)
 
-# Step 4: Linear SVM Classification
-svm = LinearSVC(maxIter=10, regParam=0.1)
-svm_model = svm.fit(train_data)
-svm_predictions = svm_model.transform(test_data)
+# 2. Linear SVM with OneVsRest - increased iterations
+svm = LinearSVC(maxIter=100, regParam=0.01)  # Lower regParam, more iterations
+ovr = OneVsRest(classifier=svm)
+svm_pipeline = Pipeline(stages=[assembler, scaler, label_indexer, ovr])
+svm_model = svm_pipeline.fit(train)
+svm_pred = svm_model.transform(test)
 
-# Step 5: Neural Network Classification
-layers = [4, 5, 3]  # Input layer (4 features), hidden layer (5 nodes), output layer (3 classes)
-mlp = MultilayerPerceptronClassifier(layers=layers, seed=42)
-mlp_model = mlp.fit(train_data)
-mlp_predictions = mlp_model.transform(test_data)
+# 3. MLP Classifier with more complex architecture
+mlp = MultilayerPerceptronClassifier(
+    layers=[4, 10, 8, 3],  # More complex: Input(4) -> Hidden(10) -> Hidden(8) -> Output(3)
+    seed=42,
+    blockSize=128,
+    maxIter=200  # Double iterations
+)
+mlp_pipeline = Pipeline(stages=[assembler, scaler, label_indexer, mlp])
+mlp_model = mlp_pipeline.fit(train)
+mlp_pred = mlp_model.transform(test)
 
-# Step 6: Evaluate Models
+# 4. Evaluation
 evaluator = MulticlassClassificationEvaluator(metricName="accuracy")
-svm_accuracy = evaluator.evaluate(svm_predictions)
-mlp_accuracy = evaluator.evaluate(mlp_predictions)
+print(f"SVM Accuracy: {evaluator.evaluate(svm_pred):.2%}")
+print(f"MLP Accuracy: {evaluator.evaluate(mlp_pred):.2%}")
 
-print(f"SVM Accuracy: {svm_accuracy}")
-print(f"MLP Accuracy: {mlp_accuracy}")
+# 5. Generate confusion matrices
+def create_confusion_matrix(predictions, title):
+    # Convert to pandas for easier processing
+    pred_df = predictions.select("label", "prediction").toPandas()
+    
+    # Get class mapping from StringIndexer
+    label_mapping = {idx: label for idx, label in enumerate(
+        predictions.schema["label"].metadata["ml_attr"]["vals"]
+    )}
+    
+    # Create confusion matrix
+    cm = np.zeros((3, 3))
+    for i in range(len(pred_df)):
+        true_label = int(pred_df.iloc[i, 0])
+        pred_label = int(pred_df.iloc[i, 1])
+        cm[true_label, pred_label] += 1
+    
+    # Plot
+    plt.figure(figsize=(8, 6))
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues if 'SVM' in title else plt.cm.Reds)
+    plt.title(title)
+    plt.colorbar()
+    
+    class_names = [label_mapping[i] for i in range(3)]
+    tick_marks = np.arange(3)
+    plt.xticks(tick_marks, class_names, rotation=45)
+    plt.yticks(tick_marks, class_names)
+    plt.xlabel('Predicted label')
+    plt.ylabel('True label')
+    
+    # Add text annotations
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            plt.text(j, i, format(int(cm[i, j]), 'd'), 
+                    horizontalalignment="center", color="white" if cm[i, j] > 5 else "black")
+    
+    plt.tight_layout()
+    return plt
 
-# Save results to file
-svm_predictions.select("features", "label", "prediction").write.csv("svm_results.csv")
-mlp_predictions.select("features", "label", "prediction").write.csv("mlp_results.csv")
+# Create and save both confusion matrices
+create_confusion_matrix(svm_pred, "SVM Results").savefig("svm_confusion.png")
+create_confusion_matrix(mlp_pred, "MLP Results").savefig("mlp_confusion.png")
 
-# Visualize Results (Example for SVM)
-svm_pandas_df = svm_predictions.toPandas()
-plt.scatter(svm_pandas_df["features"].apply(lambda x: x[0]), svm_pandas_df["features"].apply(lambda x: x[1]), c=svm_pandas_df["prediction"])
-plt.title("SVM Classification Results")
-plt.xlabel("Feature 1")
-plt.ylabel("Feature 2")
-plt.show()
+spark.stop()
