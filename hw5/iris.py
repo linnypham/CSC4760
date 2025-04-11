@@ -19,7 +19,7 @@ assembler = VectorAssembler(
     outputCol="assembled_features"
 )
 
-# Add standardization - critical for SVM and MLP
+# Add standardization 
 scaler = StandardScaler(
     inputCol="assembled_features", 
     outputCol="features",
@@ -30,19 +30,19 @@ scaler = StandardScaler(
 label_indexer = StringIndexer(inputCol="species", outputCol="label")
 train, test = df.randomSplit([0.8, 0.2], seed=42)
 
-# 2. Linear SVM with OneVsRest - increased iterations
-svm = LinearSVC(maxIter=100, regParam=0.01)  # Lower regParam, more iterations
+# 2. Linear SVM with OneVsRest 
+svm = LinearSVC(maxIter=100, regParam=0.01)  
 ovr = OneVsRest(classifier=svm)
 svm_pipeline = Pipeline(stages=[assembler, scaler, label_indexer, ovr])
 svm_model = svm_pipeline.fit(train)
 svm_pred = svm_model.transform(test)
 
-# 3. MLP Classifier with more complex architecture
+# 3. MLP Classifier 
 mlp = MultilayerPerceptronClassifier(
-    layers=[4, 10, 8, 3],  # More complex: Input(4) -> Hidden(10) -> Hidden(8) -> Output(3)
+    layers=[4, 10, 8, 3], 
     seed=42,
     blockSize=128,
-    maxIter=200  # Double iterations
+    maxIter=200 
 )
 mlp_pipeline = Pipeline(stages=[assembler, scaler, label_indexer, mlp])
 mlp_model = mlp_pipeline.fit(train)
